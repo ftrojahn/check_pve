@@ -3,9 +3,10 @@
 
 # ------------------------------------------------------------------------------
 # check_pve.py - A check plugin for Proxmox Virtual Environment (PVE).
-# Copyright (C) 2018-2020  Nicolai Buchwitz <nb@tipi-net.de>
+# Copyright (C) 2018-2020  Nicolai Buchwitz <nb@tipi-net.de>, 
+# Thoralf Rickert-Wendt <trw@acoby.de>
 #
-# Version: 1.2.0
+# Version: 1.2.0a
 #
 # ------------------------------------------------------------------------------
 # This program is free software; you can redistribute it and/or
@@ -24,23 +25,19 @@
 # ------------------------------------------------------------------------------
 
 import sys
+import subprocess
+import json
+import re
 
 try:
     from enum import Enum
     from datetime import datetime
     from distutils.version import LooseVersion
     import argparse
-    import requests
-    import urllib3
-
-    from requests.packages.urllib3.exceptions import InsecureRequestWarning
-
-    requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 except ImportError as e:
     print("Missing python module: {}".format(e.message))
     sys.exit(255)
-
 
 class CheckState(Enum):
     OK = 0
@@ -49,9 +46,27 @@ class CheckState(Enum):
     UNKNOWN = 3
 
 
+def to_text(obj, encoding='utf-8', errors=None, nonstring='simplerepr'):
+    if isinstance(obj, str):
+        return obj
+
+    if isinstance(obj, bytes):
+        return obj.decode(encoding, 'surrogateescape')
+
+    if nonstring == 'simplerepr':
+        try:
+            return str(obj)
+        except UnicodeError:
+            try:
+                return repr(obj)
+            except UnicodeError:
+                # Giving up
+                return u''
+    return u''
+
+
 class CheckPVE:
-    VERSION = '1.2.0'
-    API_URL = 'https://{hostname}:{port}/api2/json/{command}'
+    VERSION = '1.2.0a'
 
     def check_output(self):
         message = self.check_message
@@ -69,55 +84,82 @@ class CheckPVE:
         sys.exit(rc.value)
 
     def get_url(self, command):
-        return self.API_URL.format(hostname=self.options.api_endpoint, command=command, port=self.options.api_port)
+        return command
+
+    def run_command(self, handler, resource, **params):
+        # pvesh strips these before handling, so might as well
+        resource = resource.strip('/')
+        # pvesh only has lowercase handlers
+        handler = handler.lower()
+        command = [
+            "/usr/bin/pvesh",
+            handler,
+            resource,
+            "--output=json"]
+        for parameter, value in params.items():
+            command += ["-{}".format(parameter), "{}".format(value)]
+    
+        pipe = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        (result, stderr) = pipe.communicate()
+        result = to_text(result)
+        stderr = to_text(stderr).splitlines()
+        
+        if len(stderr) == 0:
+            if not result:
+                return {u"status": 200}
+    
+            # Attempt to marshall the data into JSON
+            try:
+                data = json.loads(result)
+            except ValueError:
+                return {u"status": 200, u"data": result}
+    
+            # Otherwise return data as a string
+            return {u"status": 200, u"data": data}
+    
+        if len(stderr) >= 1:
+            # This will occur when a param's value is invalid
+            if stderr[0] == "400 Parameter verification failed.":
+                return {u"status": 400, u"message": "\n".join(stderr[1:-1])}
+    
+            if stderr[0] == "no '{}' handler for '{}'".format(handler, resource):
+                return {u"status": 405, u"message": stderr[0]}
+    
+            if handler == "get":
+                if any(re.match(pattern, stderr[0]) for pattern in [
+                    "^no such user \('.{3,64}?'\)$",
+                    "^(group|role) '[A-Za-z0-9\.\-_]+' does not exist$",
+                    "^domain '[A-Za-z][A-Za-z0-9\.\-_]+' does not exist$"]):
+                    return {u"status": 404, u"message": stderr[0]}
+    
+            # This will occur when a param is invalid
+            if len(stderr) >=2 and stderr[-2].startswith("400 unable to parse"):
+                return {u"status": 400, u"message": "\n".join(stderr[:-1])}
+    
+            return {u"status": 500, u"message": u"\n".join(stderr), u"data": result}
+    
+        return {u"status": 500, u"message": u"Unexpected result occurred but no error message was provided by pvesh."}
 
     def request(self, url, method='get', **kwargs):
         response = None
         try:
             if method == 'post':
-                response = requests.post(
-                    url,
-                    verify=not self.options.api_insecure,
-                    data=kwargs.get('data', None),
-                    timeout=5
-                )
+                response = self.run_command("post", url, kwargs.get('data', None))
             elif method == 'get':
-                response = requests.get(
-                    url,
-                    verify=not self.options.api_insecure,
-                    cookies=self.ticket,
-                    params=kwargs.get('params', None)
-                )
+                response = self.run_command("get", url)
             else:
                 self.output(CheckState.CRITICAL, "Unsupport request method: {}".format(method))
-        except requests.exceptions.ConnectTimeout:
-            self.output(CheckState.UNKNOWN, "Could not connect to PVE API: Connection timeout")
-        except requests.exceptions.SSLError:
-            self.output(CheckState.UNKNOWN, "Could not connect to PVE API: Certificate validation failed")
-        except requests.exceptions.ConnectionError:
-            self.output(CheckState.UNKNOWN, "Could not connect to PVE API: Failed to resolve hostname")
+        except Exception:
+            self.output(CheckState.UNKNOWN, "Could not connect to PVE: Failed to run command")
 
-        if response.ok:
-            return response.json()['data']
+        if response["status"] == 200:
+            return response['data']
         else:
             message = "Could not fetch data from API: "
-
-            if response.status_code == 401:
-                message += "Could not connection to PVE API: invalid username or password"
-            elif response.status_code == 403:
-                message += "Access denied. Please check if API user has sufficient permissions / the role has been " \
-                           "assigned."
-            else:
-                message += "HTTP error code was {}".format(response.status_code)
+            message += "HTTP error code was {}".format(response.status)
+            message += response["message"]
 
             self.output(CheckState.UNKNOWN, message)
-
-    def get_ticket(self):
-        url = self.get_url('access/ticket')
-        data = {"username": self.options.api_user, "password": self.options.api_password}
-        result = self.request(url, "post", data=data)
-
-        self.ticket = {'PVEAuthCookie': result['ticket']}
 
     def check_api_value(self, url, message, **kwargs):
         result = self.request(url)
@@ -389,8 +431,7 @@ class CheckPVE:
             self.check_message = "Current pve version '{}' ({}) is lower than the min. required version '{}'".format(
                 data['version'], data['repoid'], self.options.min_version)
         else:
-            self.check_message = "Your pve instance version '{}' ({}) is up to date".format(data['version'],
-                                                                                            data['repoid'])
+            self.check_message = "Your pve instance version '{}' ({}) is up to date".format(data['version'], data['repoid'])
 
     def check_memory(self):
         url = self.get_url('nodes/{}/status'.format(self.options.node))
@@ -507,62 +548,21 @@ class CheckPVE:
         self.check_output()
 
     def parse_args(self):
-        p = argparse.ArgumentParser(description='Check command for PVE hosts via API')
-
-        api_opts = p.add_argument_group('API Options')
-
-        api_opts.add_argument("-e", "--api-endpoint", required=True, help="PVE api endpoint hostname")
-        api_opts.add_argument("--api-port", required=False, help="PVE api endpoint port")
-
-        api_opts.add_argument("-u", "--username", dest='api_user', required=True,
-                              help="PVE api user (e.g. icinga2@pve or icinga2@pam, depending on which backend you "
-                                   "have chosen in proxmox)")
-        api_opts.add_argument("-p", "--password", dest='api_password', required=True, help="PVE api user password")
-        api_opts.add_argument("-k", "--insecure", dest='api_insecure', action='store_true', default=False,
-                              help="Don't verify HTTPS certificate")
-
-        api_opts.set_defaults(api_port=8006)
+        p = argparse.ArgumentParser(description='Check command for PVE hosts via PVESH')
 
         check_opts = p.add_argument_group('Check Options')
-
-        check_opts.add_argument("-m", "--mode",
-                                choices=(
-                                    'cluster', 'version', 'cpu', 'memory', 'storage', 'io_wait', 'updates', 'services',
-                                    'subscription', 'vm', 'vm_status', 'replication', 'disk-health', 'ceph-health'),
-                                required=True,
-                                help="Mode to use.")
-
-        check_opts.add_argument('-n', '--node', dest='node',
-                                help='Node to check (necessary for all modes except cluster and version)')
-
-        check_opts.add_argument('--name', dest='name',
-                                help='Name of storage, vm, or container')
-
-        check_opts.add_argument('--vmid', dest='vmid', type=int,
-                                help='ID of virtual machine or container')
-
-        check_opts.add_argument('--expected-vm-status', choices=('running', 'stopped', 'paused'),
-                                help='Expected VM status')
-
-        check_opts.add_argument('--ignore-vm-status', dest='ignore_vm_status', action='store_true',
-                                help='Ignore VM status in checks',
-                                default=False)
-
-        check_opts.add_argument('--ignore-service', dest='ignore_services', action='append', metavar='NAME',
-                                help='Ignore service NAME in checks', default=[])
-
-        check_opts.add_argument('--ignore-disk', dest='ignore_disks', action='append', metavar='NAME',
-                                help='Ignore disk NAME in health check', default=[])
-
-        check_opts.add_argument('-w', '--warning', dest='threshold_warning', type=float,
-                                help='Warning threshold for check value')
-        check_opts.add_argument('-c', '--critical', dest='threshold_critical', type=float,
-                                help='Critical threshold for check value')
-        check_opts.add_argument('-M', dest='values_mb', action='store_true', default=False,
-                                help='Values are shown in MB (if available). Thresholds are also treated as MB values')
-        check_opts.add_argument('-V', '--min-version', dest='min_version', type=str,
-                                help='The minimal pve version to check for. Any version lower than this will return '
-                                     'CRITICAL.')
+        check_opts.add_argument("-m", "--mode", choices=('cluster', 'version', 'cpu', 'memory', 'storage', 'io_wait', 'updates', 'services', 'subscription', 'vm', 'vm_status', 'replication', 'disk-health', 'ceph-health'), required=True, help="Mode to use.")
+        check_opts.add_argument('-n', '--node', dest='node', help='Node to check (necessary for all modes except cluster and version)')
+        check_opts.add_argument('--name', dest='name', help='Name of storage, vm, or container')
+        check_opts.add_argument('--vmid', dest='vmid', type=int, help='ID of virtual machine or container')
+        check_opts.add_argument('--expected-vm-status', choices=('running', 'stopped', 'paused'), help='Expected VM status')
+        check_opts.add_argument('--ignore-vm-status', dest='ignore_vm_status', action='store_true', help='Ignore VM status in checks', default=False)
+        check_opts.add_argument('--ignore-service', dest='ignore_services', action='append', metavar='NAME', help='Ignore service NAME in checks', default=[])
+        check_opts.add_argument('--ignore-disk', dest='ignore_disks', action='append', metavar='NAME', help='Ignore disk NAME in health check', default=[])
+        check_opts.add_argument('-w', '--warning', dest='threshold_warning', type=float, help='Warning threshold for check value')
+        check_opts.add_argument('-c', '--critical', dest='threshold_critical', type=float, help='Critical threshold for check value')
+        check_opts.add_argument('-M', dest='values_mb', action='store_true', default=False, help='Values are shown in MB (if available). Thresholds are also treated as MB values')
+        check_opts.add_argument('-V', '--min-version', dest='min_version', type=str, help='The minimal pve version to check for. Any version lower than this will return CRITICAL.')
 
         options = p.parse_args()
 
@@ -573,8 +573,7 @@ class CheckPVE:
 
         if not options.vmid and not options.name and options.mode == 'vm':
             p.print_usage()
-            message = "{}: error: --mode {} requires either vm name (--name) or id (--vmid)".format(p.prog,
-                                                                                                    options.mode)
+            message = "{}: error: --mode {} requires either vm name (--name) or id (--vmid)".format(p.prog,options.mode)
             self.output(CheckState.UNKNOWN, message)
 
         if not options.name and options.mode == 'storage':
@@ -592,13 +591,11 @@ class CheckPVE:
 
     def __init__(self):
         self.options = {}
-        self.ticket = None
         self.perfdata = []
         self.check_result = -1
         self.check_message = ""
 
         self.parse_args()
-        self.get_ticket()
 
 
 pve = CheckPVE()

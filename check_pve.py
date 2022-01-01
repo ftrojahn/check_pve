@@ -6,7 +6,7 @@
 # Copyright (C) 2018-2020  Nicolai Buchwitz <nb@tipi-net.de>, 
 # Thoralf Rickert-Wendt <trw@acoby.de>
 #
-# Version: 1.2.0a
+# Version: 1.2.2a
 #
 # ------------------------------------------------------------------------------
 # This program is free software; you can redistribute it and/or
@@ -32,7 +32,7 @@ import re
 try:
     from enum import Enum
     from datetime import datetime
-    from distutils.version import LooseVersion
+    from packaging import version
     import argparse
 
 except ImportError as e:
@@ -66,7 +66,7 @@ def to_text(obj, encoding='utf-8', errors=None, nonstring='simplerepr'):
 
 
 class CheckPVE:
-    VERSION = '1.2.0a'
+    VERSION = '1.2.2a'
 
     def check_output(self):
         message = self.check_message
@@ -522,7 +522,7 @@ class CheckPVE:
         if not data['version']:
             self.check_result = CheckState.UNKNOWN
             self.check_message = "Unable to determine pve version"
-        elif self.options.min_version and LooseVersion(self.options.min_version) > LooseVersion(data['version']):
+        elif self.options.min_version and version.parse(self.options.min_version) > version.parse(data['version']):
             self.check_result = CheckState.CRITICAL
             self.check_message = "Current pve version '{}' ({}) is lower than the min. required version '{}'".format(
                 data['version'], data['repoid'], self.options.min_version)

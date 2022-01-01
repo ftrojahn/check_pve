@@ -6,22 +6,27 @@ Icinga check command for Proxmox VE via PVESH
 ### Requirements
 
 This check command depends on **Python 3** and the following modules:
- * enum
  * argparse
+ * packaging
 
 **Installation on Debian / Ubuntu**
 ```
-apt install python3
+apt install python3 python3-packaging
 ```
 
 **Installation on Redhat 7 / CentOS 7**
 ```
-yum install python36
+yum install python36 python36-packaging
 ```
 
 **Installation on FreeBSD**
 ```
-pkg install python3
+pkg install python3 py39-packaging
+```
+
+**Installation from requirements file**
+```
+pip3 install -r requirements.txt
 ```
 
 ## Usage

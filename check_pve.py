@@ -104,6 +104,15 @@ class CheckThreshold:
 
 class CheckPVE:
     VERSION = '1.2.2a'
+    UNIT_SCALE = {
+            "GB": 10**9,
+            "MB": 10**6,
+            "KB": 10**3,
+            "GiB": 2**30,
+            "MiB": 2**20,
+            "KiB": 2**10,
+            "B": 1
+        }
 
     def check_output(self):
         message = self.check_message
@@ -211,13 +220,13 @@ class CheckPVE:
             total = self.get_value(result['total'])
 
             self.add_perfdata(kwargs.get('perfkey', 'usage'), used_percent)
-            self.add_perfdata(kwargs.get('perfkey', 'used'), used, max=total, unit='MB')
+            self.add_perfdata(kwargs.get('perfkey', 'used'), used, max=total, unit=self.options.unit)
         else:
             used_percent = round(float(result) * 100, 2)
             self.add_perfdata(kwargs.get('perfkey', 'usage'), used_percent)
 
         if self.options.values_mb:
-            message += ' {} {}'.format(used, 'MB')
+            message += ' {} {}'.format(used, self.options.unit)
             value = used
         else:
             message += ' {} {}'.format(used_percent, '%')
@@ -258,8 +267,8 @@ class CheckPVE:
                     self.add_perfdata("cpu", cpu)
 
                     if self.options.values_mb:
-                        memory = vm['mem'] / 1024 / 1024
-                        self.add_perfdata("memory", memory, unit="MB", max=vm['maxmem'] / 1024 / 1024)
+                        memory = self.scale_value(vm['mem'])
+                        self.add_perfdata("memory", memory, unit=self.options.unit, max=self.scale_value(vm['maxmem']))
 
                     else:
                         memory = self.get_value(vm['mem'], vm['maxmem'])
@@ -608,6 +617,12 @@ class CheckPVE:
         else:
             self.check_message = message
 
+    def scale_value(self, value):
+        if self.options.unit in self.UNIT_SCALE:
+            return value / self.UNIT_SCALE[self.options.unit]
+        else:
+            assert('wrong unit')
+
     def threshold_warning(self, name: str):
         return self.options.threshold_warning.get(name, self.options.threshold_warning.get(None, None))
 
@@ -621,7 +636,7 @@ class CheckPVE:
         if total:
             value /= float(total) / 100
         else:
-            value /= 1024 * 1024
+            value = self.scale_value(value)
 
         return round(value, 2)
 
@@ -641,8 +656,8 @@ class CheckPVE:
         if threshold_critical:
             perfdata += str(threshold_critical.value)
 
-        if 'max' in kwargs:
-            perfdata += ';{}'.format(kwargs.get('max'))
+        perfdata += ';{}'.format(kwargs.get('min', 0))
+        perfdata += ';{}'.format(kwargs.get('max', ''))
 
         self.perfdata.append(perfdata)
 
@@ -746,10 +761,12 @@ class CheckPVE:
         check_opts.add_argument('-c', '--critical', dest='threshold_critical', type=CheckThreshold.threshold_type,
                                 default={}, help='Critical threshold for check value. Mutiple thresholds with name:value,name:value')
         check_opts.add_argument('-M', dest='values_mb', action='store_true', default=False,
-                                help='Values are shown in MB (if available). Thresholds are also treated as MB values')
+                                help='Values are shown in the unit which is set with --unit (if available). Thresholds are also treated in this unit')
         check_opts.add_argument('-V', '--min-version', dest='min_version', type=str,
                                 help='The minimal pve version to check for. Any version lower than this will return '
                                      'CRITICAL.')
+
+        check_opts.add_argument('--unit', choices=self.UNIT_SCALE.keys(), default='MiB', help='Unit which is used for performance data and other values')
 
         options = p.parse_args()
 

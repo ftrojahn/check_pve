@@ -724,7 +724,7 @@ class CheckPVE:
             self.check_memory()
         elif self.options.mode == 'swap':
             self.check_swap()
-        elif self.options.mode == 'io_wait':
+        elif self.options.mode in ("io_wait", "io-wait"):
             self.check_io_wait()
         elif self.options.mode == 'disk-health':
             self.check_disks()
@@ -738,8 +738,8 @@ class CheckPVE:
             self.check_subscription()
         elif self.options.mode == 'storage':
             self.check_storage(self.options.name)
-        elif self.options.mode in ['vm', 'vm_status']:
-            only_status = self.options.mode == 'vm_status'
+        elif self.options.mode in ["vm", "vm_status", "vm-status"]:
+            only_status = self.options.mode in ["vm_status", "vm-status"]
 
             if self.options.name:
                 idx = self.options.name
@@ -771,14 +771,6 @@ class CheckPVE:
 
         check_opts = p.add_argument_group('Check Options')
 
-        check_opts.add_argument("-m", "--mode",
-                                choices=(
-                                    'cluster', 'version', 'cpu', 'memory', 'swap', 'storage', 'io_wait', 'updates', 'services',
-                                    'subscription', 'vm', 'vm_status', 'replication', 'disk-health', 'ceph-health',
-                                    'zfs-health', 'zfs-fragmentation', 'backup'),
-                                required=True,
-                                help="Mode to use.")
-
         check_opts.add_argument('-n', '--node', dest='node',
                                 help='Node to check (necessary for all modes except cluster, version and backup)')
 
@@ -797,6 +789,35 @@ class CheckPVE:
 
         check_opts.add_argument('--ignore-service', dest='ignore_services', action='append', metavar='NAME',
                                 help='Ignore service NAME in checks', default=[])
+
+        check_opts.add_argument(
+            "-m",
+            "--mode",
+            choices=(
+                "cluster",
+                "version",
+                "cpu",
+                "memory",
+                "swap",
+                "storage",
+                "io_wait",
+                "io-wait",
+                "updates",
+                "services",
+                "subscription",
+                "vm",
+                "vm_status",
+                "vm-status",
+                "replication",
+                "disk-health",
+                "ceph-health",
+                "zfs-health",
+                "zfs-fragmentation",
+                "backup",
+            ),
+            required=True,
+            help="Mode to use.",
+        )
 
         check_opts.add_argument('--ignore-disk', dest='ignore_disks', action='append', metavar='NAME',
                                 help='Ignore disk NAME in health check', default=[])

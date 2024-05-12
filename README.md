@@ -14,9 +14,9 @@ This check command depends on **Python 3** and the following modules:
 apt install python3 python3-packaging
 ```
 
-**Installation on Redhat 7 / CentOS 7**
+**Installation on Rocky / Alma Linux 9**
 ```
-yum install python36 python36-packaging
+yum install python3 python3-packaging
 ```
 
 **Installation on FreeBSD**

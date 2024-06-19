@@ -30,8 +30,9 @@ import json
 import re
 
 try:
+    import argparse
+    from datetime import datetime, timezone
     from enum import Enum
-    from datetime import datetime
     from packaging import version
     import argparse
 
@@ -598,8 +599,10 @@ class CheckPVE:
         # Filter by timestamp, if provided
         delta = self.threshold_critical('delta')
         if delta is not None:
-            now = datetime.utcnow().timestamp()
-            tasks = [t for t in tasks if not delta.check(now - t['starttime'])]
+            now = datetime.now(timezone.utc).timestamp()
+
+            tasks = [t for t in tasks if not delta.check(now - t["starttime"])]
+
         # absent status = job still running
         tasks = [t for t in tasks if 'status' in t]
         failed = len([t for t in tasks if t['status'] != 'OK'])

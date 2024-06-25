@@ -39,8 +39,8 @@ usage: check_pve.py [-h] -m
                     [-n NODE] [--name NAME] [--vmid VMID]
                     [--expected-vm-status {running,stopped,paused}]
                     [--ignore-vm-status] [--ignore-service NAME]
-                    [--ignore-disk NAME] [-w TRESHOLD_WARNING]
-                    [-c TRESHOLD_CRITICAL] [-M] [-V MIN_VERSION]
+                    [--ignore-disk NAME] [--ignore-pools NAME]
+                    [-w TRESHOLD_WARNING] [-c TRESHOLD_CRITICAL] [-M] [-V MIN_VERSION]
                     [--unit {GB,MB,KB,GiB,MiB,KiB,B}]
 
 Check command for PVE hosts via PVESH
@@ -60,6 +60,7 @@ Check Options:
   --ignore-service NAME
                         Ignore service NAME in checks
   --ignore-disk NAME    Ignore disk NAME in health check
+  --ignore-pools NAME   Ignore vms and containers in pool(s) NAME in checks
   -w THRESHOLD_WARNING, --warning THRESHOLD_WARNING
                         Warning threshold for check value. Multiple thresholds with name:value,name:value
   -c THRESHOLD_CRITICAL, --critical THRESHOLD_CRITICAL

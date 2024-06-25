@@ -28,6 +28,7 @@ import sys
 import subprocess
 import json
 import re
+from typing import Callable, Dict, Optional, Union, List
 
 try:
     import argparse
@@ -38,6 +39,26 @@ try:
 except ImportError as e:
     print("Missing python module: {}".format(e.message))
     sys.exit(255)
+
+
+def compare_thresholds(
+    threshold_warning: Dict, threshold_critical: Dict, comparator: Callable
+) -> bool:
+    """Perform sanity checks on thresholds parameters (used for argparse validation)."""
+    ok = True
+    keys = set(list(threshold_warning.keys()) + list(threshold_critical.keys()))
+    for key in keys:
+        if (key in threshold_warning and key in threshold_critical) or (
+            None in threshold_warning and None in threshold_critical
+        ):
+            ok = ok and comparator(threshold_warning[key], threshold_critical[key])
+        elif key in threshold_warning and None in threshold_critical:
+            ok = ok and comparator(threshold_warning[key], threshold_critical[None])
+        elif key in threshold_critical and None in threshold_warning:
+            ok = ok and comparator(threshold_warning[None], threshold_critical[key])
+
+    return ok
+
 
 class CheckState(Enum):
     OK = 0
@@ -63,6 +84,7 @@ def to_text(obj, encoding='utf-8', errors=None, nonstring='simplerepr'):
                 # Giving up
                 return u''
     return u''
+
 
 class CheckThreshold:
     def __init__(self, value: float):
@@ -106,6 +128,16 @@ class CheckThreshold:
                         "invalid threshold format: {}".format(t))
 
         return thresholds
+
+
+class RequestError(Exception):
+    """Exception for request related errors."""
+
+    def __init__(self, message: str, rc: int) -> None:
+        self.message = message
+        self.rc = rc
+
+        super().__init__(self.message)
 
 
 class CheckPVE:
@@ -213,7 +245,10 @@ class CheckPVE:
             message += "HTTP error code was {}".format(response.status)
             message += response["message"]
 
-            self.output(CheckState.UNKNOWN, message)
+        if kwargs.get("raise_error", False):
+            raise RequestError(message, response.status_code)
+
+        self.output(CheckState.UNKNOWN, message)
 
     def check_api_value(self, url, message, **kwargs):
         result = self.request(url)
@@ -588,8 +623,29 @@ class CheckPVE:
         else:
             self.check_message = "Your pve instance version '{}' ({}) is up to date".format(data['version'], data['repoid'])
 
-    def check_vzdump_backup(self, name=None):
-        tasks_url = self.get_url('cluster/tasks')
+    def _get_pool_members(self, pool: str) -> List[int]:
+        """Get a list of vmids, which are members of a given resource pool.
+
+        NOTE: The request needs the Pool.Audit permission!
+        """
+        members = []
+
+        try:
+            url = self.get_url(f"pools/{pool}")
+            pools = self.request(url, raise_error=True)
+            for pool in pools.get("members", []):
+                members.append(pool["vmid"])
+        except RequestError:
+            print(
+                f"Unable to fetch members of pool '{pool}'. "
+                "Check if the name is correct and the role has the 'Pool.Audit' permission"
+            )
+
+        return members
+
+    def check_vzdump_backup(self, name: Optional[str] = None) -> None:
+        """Check for failed vzdump backup jobs."""
+        tasks_url = self.get_url("cluster/tasks")
         tasks = self.request(tasks_url)
         tasks = [t for t in tasks if t['type'] == 'vzdump']
         # Filter by node id, if one is provided
@@ -616,11 +672,25 @@ class CheckPVE:
 
         nbu_url = self.get_url('cluster/backup-info/not-backed-up')
         not_backed_up = self.request(nbu_url)
+
         if len(not_backed_up) > 0:
-            guest_ids = ' '.join([str(guest['vmid']) for guest in not_backed_up])
-            if self.check_result not in [CheckState.CRITICAL, CheckState.UNKNOWN]:
-                self.check_result = CheckState.WARNING
-            self.check_message += "\nThere are guests not covered by any backup schedule: {}".format(guest_ids)
+            guest_ids = []
+
+            for guest in not_backed_up:
+                guest_ids.append(str(guest["vmid"]))
+
+            ignored_vmids = []
+            for pool in self.options.ignore_pools:
+                ignored_vmids += map(str, self._get_pool_members(pool))
+
+            remaining_not_backed_up = sorted(list(set(guest_ids) - set(ignored_vmids)))
+            if len(remaining_not_backed_up) > 0:
+                if self.check_result not in [CheckState.CRITICAL, CheckState.UNKNOWN]:
+                    self.check_result = CheckState.WARNING
+                    self.check_message += (
+                        "\nThere are unignored guests not covered by any backup schedule: "
+                        + ", ".join(remaining_not_backed_up)
+                    )
 
     def check_memory(self):
         url = self.get_url('nodes/{}/status'.format(self.options.node))
@@ -773,25 +843,6 @@ class CheckPVE:
 
         check_opts = p.add_argument_group('Check Options')
 
-        check_opts.add_argument('-n', '--node', dest='node',
-                                help='Node to check (necessary for all modes except cluster, version and backup)')
-
-        check_opts.add_argument('--name', dest='name',
-                                help='Name of storage, vm, or container')
-
-        check_opts.add_argument('--vmid', dest='vmid', type=int,
-                                help='ID of virtual machine or container')
-
-        check_opts.add_argument('--expected-vm-status', choices=('running', 'stopped', 'paused'),
-                                help='Expected VM status')
-
-        check_opts.add_argument('--ignore-vm-status', dest='ignore_vm_status', action='store_true',
-                                help='Ignore VM status in checks',
-                                default=False)
-
-        check_opts.add_argument('--ignore-service', dest='ignore_services', action='append', metavar='NAME',
-                                help='Ignore service NAME in checks', default=[])
-
         check_opts.add_argument(
             "-m",
             "--mode",
@@ -821,24 +872,115 @@ class CheckPVE:
             help="Mode to use.",
         )
 
-        check_opts.add_argument('--ignore-disk', dest='ignore_disks', action='append', metavar='NAME',
-                                help='Ignore disk NAME in health check', default=[])
+        check_opts.add_argument(
+            "-n",
+            "--node",
+            dest="node",
+            help="Node to check (necessary for all modes except cluster, version and backup)",
+        )
 
-        check_opts.add_argument('-w', '--warning', dest='threshold_warning', type=CheckThreshold.threshold_type,
-                                default={}, help='Warning threshold for check value. Mutiple thresholds with name:value,name:value')
-        check_opts.add_argument('-c', '--critical', dest='threshold_critical', type=CheckThreshold.threshold_type,
-                                default={}, help='Critical threshold for check value. Mutiple thresholds with name:value,name:value')
-        check_opts.add_argument('-M', dest='values_mb', action='store_true', default=False,
-                                help='Values are shown in the unit which is set with --unit (if available). Thresholds are also treated in this unit')
-        check_opts.add_argument('-V', '--min-version', dest='min_version', type=str,
-                                help='The minimal pve version to check for. Any version lower than this will return '
-                                     'CRITICAL.')
+        check_opts.add_argument("--name", dest="name", help="Name of storage, vm, or container")
 
-        check_opts.add_argument('--unit', choices=self.UNIT_SCALE.keys(), default='MiB', help='Unit which is used for performance data and other values')
+        check_opts.add_argument(
+            "--vmid", dest="vmid", type=int, help="ID of virtual machine or container"
+        )
+
+        check_opts.add_argument(
+            "--expected-vm-status",
+            choices=("running", "stopped", "paused"),
+            help="Expected VM status",
+        )
+
+        check_opts.add_argument(
+            "--ignore-vm-status",
+            dest="ignore_vm_status",
+            action="store_true",
+            help="Ignore VM status in checks",
+            default=False,
+        )
+
+        check_opts.add_argument(
+            "--ignore-service",
+            dest="ignore_services",
+            action="append",
+            metavar="NAME",
+            help="Ignore service NAME in checks",
+            default=[],
+        )
+
+        check_opts.add_argument(
+            "--ignore-disk",
+            dest="ignore_disks",
+            action="append",
+            metavar="NAME",
+            help="Ignore disk NAME in health check",
+            default=[],
+        )
+
+        check_opts.add_argument(
+            "--ignore-pools",
+            dest="ignore_pools",
+            action="append",
+            metavar="NAME",
+            help="Ignore vms and containers in pool(s) NAME in checks",
+            default=[],
+        )
+
+        check_opts.add_argument(
+            "-w",
+            "--warning",
+            dest="threshold_warning",
+            type=CheckThreshold.threshold_type,
+            default={},
+            help="Warning threshold for check value. Mutiple thresholds with name:value,name:value",
+        )
+        check_opts.add_argument(
+            "-c",
+            "--critical",
+            dest="threshold_critical",
+            type=CheckThreshold.threshold_type,
+            default={},
+            help=(
+                "Critical threshold for check value. "
+                "Mutiple thresholds with name:value,name:value"
+            ),
+        )
+        check_opts.add_argument(
+            "-M",
+            dest="values_mb",
+            action="store_true",
+            default=False,
+            help=(
+                "Values are shown in the unit which is set with --unit (if available). "
+                "Thresholds are also treated in this unit"
+            ),
+        )
+        check_opts.add_argument(
+            "-V",
+            "--min-version",
+            dest="min_version",
+            type=str,
+            help="The minimal pve version to check for. Any version lower than this will return "
+            "CRITICAL.",
+        )
+
+        check_opts.add_argument(
+            "--unit",
+            choices=self.UNIT_SCALE.keys(),
+            default="MiB",
+            help="Unit which is used for performance data and other values",
+        )
 
         options = p.parse_args()
 
-        if not options.node and options.mode not in ['cluster', 'vm', 'vm_status', 'version', 'ceph-health', 'backup']:
+        if not options.node and options.mode not in [
+            "cluster",
+            "vm",
+            "vm_status",
+            "version",
+            "ceph-health",
+            "backup",
+        ]:
             p.print_usage()
             message = "{}: error: --mode {} requires node name (--node)".format(p.prog, options.mode)
             self.output(CheckState.UNKNOWN, message)
@@ -856,19 +998,6 @@ class CheckPVE:
             p.print_usage()
             message = "{}: error: --mode {} requires storage name (--name)".format(p.prog, options.mode)
             self.output(CheckState.UNKNOWN, message)
-
-        def compare_thresholds(threshold_warning, threshold_critical, comparator):
-            ok = True
-            keys = set(list(threshold_warning.keys()) + list(threshold_critical.keys()))
-            for key in keys:
-                if (key in threshold_warning and key in threshold_critical) or (None in threshold_warning and None in threshold_critical):
-                    ok = ok and comparator(threshold_warning[key], threshold_critical[key])
-                elif key in threshold_warning and None in threshold_critical:
-                    ok = ok and comparator(threshold_warning[key], threshold_critical[None])
-                elif key in threshold_critical and None in threshold_warning:
-                    ok = ok and comparator(threshold_warning[None], threshold_critical[key])
-
-            return ok
 
         if options.threshold_warning and options.threshold_critical:
             if options.mode != 'subscription' and not compare_thresholds(options.threshold_warning, options.threshold_critical, lambda w,c: w<=c):

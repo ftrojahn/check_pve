@@ -6,7 +6,7 @@
 # Copyright (C) 2018-2024  Nicolai Buchwitz <nb@tipi-net.de>
 # Thoralf Rickert-Wendt <trw@acoby.de>
 #
-# Version: 1.3.0a
+# Version: 1.4.0a
 #
 # ------------------------------------------------------------------------------
 # This program is free software; you can redistribute it and/or
@@ -143,7 +143,7 @@ class RequestError(Exception):
 class CheckPVE:
     """Check command for Proxmox VE."""
 
-    VERSION = "1.3.0a"
+    VERSION = "1.4.0a"
     UNIT_SCALE = {
             "GB": 10**9,
             "MB": 10**6,

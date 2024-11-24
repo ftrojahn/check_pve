@@ -34,7 +34,6 @@ try:
     from datetime import datetime, timezone
     from enum import Enum
     from packaging import version
-    import argparse
 
 except ImportError as e:
     print("Missing python module: {}".format(e.message))

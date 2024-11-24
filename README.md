@@ -61,9 +61,9 @@ Check Options:
                         Ignore service NAME in checks
   --ignore-disk NAME    Ignore disk NAME in health check
   -w THRESHOLD_WARNING, --warning THRESHOLD_WARNING
-                        Warning threshold for check value. Mutiple thresholds with name:value,name:value
+                        Warning threshold for check value. Multiple thresholds with name:value,name:value
   -c THRESHOLD_CRITICAL, --critical THRESHOLD_CRITICAL
-                        Critical threshold for check value Mutiple thresholds with name:value,name:value
+                        Critical threshold for check value Multiple thresholds with name:value,name:value
   -M                    Values are shown in the unit which is set with --unit (if available). Thresholds are also treated in this unit
   -V MIN_VERSION, --min-version MIN_VERSION
                         The minimal pve version to check for. Any version lower than this will return CRITICAL.

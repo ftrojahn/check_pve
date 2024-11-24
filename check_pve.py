@@ -211,7 +211,7 @@ class CheckPVE:
                     if self.options.node and self.options.node != vm['node']:
                         self.check_message = "{} '{}' is {}, but located on node '{}' instead of '{}'" \
                             .format(vm_type, vm['name'], expected_state, vm['node'], self.options.node)
-                        self.check_result = CheckState.WARNING
+                        self.check_result = CheckState.OK
                     else:
                         self.check_message = "{} '{}' on node '{}' is {}" \
                             .format(vm_type, vm['name'], vm['node'], expected_state)

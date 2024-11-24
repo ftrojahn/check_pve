@@ -42,7 +42,7 @@ usage: check_pve.py [-h] -m
                     [--ignore-disk NAME] [-w TRESHOLD_WARNING]
                     [-c TRESHOLD_CRITICAL] [-M] [-V MIN_VERSION]
 
-Check command for PVE hosts via API
+Check command for PVE hosts via PVESH
 
 options:
   -h, --help            show this help message and exit
@@ -162,7 +162,7 @@ For hostalive checks without gathering performance data use ``vm_status`` instea
 
 **Check swap usage**
 ```
-./check_pve.py -u <API_USER> -p <API_PASSWORD> -e <API_ENDPOINT> -m swap -n pve
+./check_pve.py -m swap -n pve
 OK - Swap usage is 0.0 %|usage=0.0%;; used=0.0MB;;;8192.0
 ```
 
@@ -180,19 +180,19 @@ WARNING - Ceph Cluster is in warning state
 
 **Check ZFS pool health**
 ```
-./check_pve.py -u <API_USER> -p <API_PASSWORD> -e <API_ENDPOINT> -m zfs-health -n pve 
+./check_pve.py -m zfs-health -n pve 
 OK - All ZFS pools are healthy
 ```
 
 Check for specific pool:
 ```
-./check_pve.py -u <API_USER> -p <API_PASSWORD> -e <API_ENDPOINT> -m zfs-health -n pve --name rpool
+./check_pve.py -m zfs-health -n pve --name rpool
 OK - ZFS pool 'rpool' is healthy
 ```
 
 **Check ZFS pool fragmentation**
 ```
-./check_pve.py -u <API_USER> -p <API_PASSWORD> -e <API_ENDPOINT> -m zfs-fragmentation -n pve -w 40 -c 60
+./check_pve.py -m zfs-fragmentation -n pve -w 40 -c 60
 CRITICAL - 2 of 2 ZFS pools are above fragmentation thresholds:
 
 - rpool (71 %) is CRITICAL
@@ -203,7 +203,7 @@ CRITICAL - 2 of 2 ZFS pools are above fragmentation thresholds:
 
 Check for specific pool:
 ```
-./check_pve.py -u <API_USER> -p <API_PASSWORD> -e <API_ENDPOINT> -m zfs-fragmentation -n pve --name diskpool -w 40 -c 60
+./check_pve.py -m zfs-fragmentation -n pve --name diskpool -w 40 -c 60
 WARNING - Fragmentation of ZFS pool 'diskpool' is above thresholds: 50 %|fragmentation=50%;40.0;60.0
 ```
 
